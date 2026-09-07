@@ -244,7 +244,7 @@
 	if(isliving(grabbed_atom))
 		grabbed_atom.add_traits(list(TRAIT_IMMOBILIZED, TRAIT_HANDS_BLOCKED), REF(src))
 		RegisterSignal(grabbed_atom, COMSIG_MOB_STATCHANGE, PROC_REF(on_statchange))
-	target.do_sparks(3, FALSE)
+	do_sparks(3, FALSE, target)
 	ADD_TRAIT(grabbed_atom, TRAIT_NO_FLOATING_ANIM, REF(src))
 	RegisterSignal(grabbed_atom, COMSIG_MOVABLE_SET_ANCHORED, PROC_REF(on_setanchored))
 	playsound(grabbed_atom, 'sound/items/weapons/contractor_baton/contractorbatonhit.ogg', 75, TRUE)
@@ -265,7 +265,7 @@
 	. = grabbed_atom
 	if(playsound)
 		playsound(grabbed_atom, 'sound/effects/empulse.ogg', 75, TRUE)
-	grabbed_atom.do_sparks(3, FALSE)
+	do_sparks(3, FALSE, grabbed_atom)
 	STOP_PROCESSING(SSfastprocess, src)
 	UnregisterSignal(grabbed_atom, list(COMSIG_MOB_STATCHANGE, COMSIG_MOVABLE_SET_ANCHORED))
 	kinesis_catcher = null
@@ -305,17 +305,17 @@
 /// Launches the passed thing away from the user
 /obj/item/tethergun/proc/launch(atom/movable/launched_object, mob/user)
 	playsound(launched_object, 'sound/effects/magic/repulse.ogg', 100, TRUE)
-	launched_object.do_sparks(3, FALSE)
+	do_sparks(3, FALSE, launched_object)
 	RegisterSignal(launched_object, COMSIG_MOVABLE_IMPACT, PROC_REF(launch_impact))
 	var/turf/target_turf = get_turf_in_angle(get_angle(user, launched_object), get_turf(src), 10)
 	launched_object.throw_at(target_turf, range = grab_range, speed = isitem(launched_object) ? 3 : 2, thrower = user, spin = isitem(launched_object))
 
 /// Launches the user away from the passed thing
-/obj/item/tethergun/proc/launch_user(atom/movable/launched_object, mob/user)
-	playsound(launched_object, 'sound/effects/magic/repulse.ogg', 100, TRUE)
-	launched_object.do_sparks(3, FALSE)
-	RegisterSignal(launched_object, COMSIG_MOVABLE_IMPACT, PROC_REF(launch_impact))
-	var/turf/target_turf = get_turf_in_angle(get_angle(launched_object, user), get_turf(src), 10)
+/obj/item/tethergun/proc/launch_user(atom/movable/target_object, mob/user)
+	playsound(target_object, 'sound/effects/magic/repulse.ogg', 100, TRUE)
+	do_sparks(3, FALSE, target_object)
+	RegisterSignal(target_object, COMSIG_MOVABLE_IMPACT, PROC_REF(launch_impact))
+	var/turf/target_turf = get_turf_in_angle(get_angle(target_object, user), get_turf(src), 10)
 	user.throw_at(target_turf, range = grab_range, speed = 1, thrower = user, spin = FALSE)
 
 /// Handles an object thrown by the tethergun hitting something else
