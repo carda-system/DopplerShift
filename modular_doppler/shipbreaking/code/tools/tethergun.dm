@@ -1,6 +1,15 @@
 #define TETHERGUN_MODE_MOVE "manipulate"
 #define TETHERGUN_MODE_TETHER "tether"
 
+/// Delay between picking an item up and the first time it moves
+#define PICKUP_COOLDOWN_LENGTH 1 SECONDS
+/// Delay between a held item hitting other things to prevent spam
+#define HIT_COOLDOWN_TIME 1 SECONDS
+/// The length of the cooldown if an atom counts as "heavy"
+#define HEAVY_ATOM_DELAY 1 SECONDS
+/// How long between right click launches do we wait
+#define RCLICK_LAUNCH_DELAY 0.5 SECONDS
+
 // Someone on tg should really make kinesis a component or something instead of having to copy and paste all of it everywhere
 /obj/item/tethergun
 	name = "matter-energy tetherspike"
@@ -26,8 +35,6 @@
 	var/operating_mode = TETHERGUN_MODE_MOVE
 	/// Range of the manipulator mode
 	var/grab_range = 9
-	/// Time between us hitting objects with manipulator mode
-	var/hit_cooldown_time = 1 SECONDS
 	/// Stat required for us to grab a mob
 	var/stat_required = DEAD
 	/// Atom we grabbed with manipulator mode
@@ -40,18 +47,16 @@
 	var/atom/movable/screen/fullscreen/cursor_catcher/kinesis_catcher
 	/// The sounds playing while we grabbed an object
 	var/datum/looping_sound/gravgen/kinesis/soundloop
-	/// The cooldown between us hitting objects with kinesis
-	COOLDOWN_DECLARE(hit_cooldown)
-	/// The length of the cooldown if an atom counts as "heavy"
-	var/heavy_atom_delay = 1 SECONDS
-	/// The cooldown between moving a grabbed thing between tiles
-	COOLDOWN_DECLARE(atom_move_cooldown)
 	/// The last mob that used this tethergun
 	var/mob/living/last_user
-	/// How long between right click launches do we wait
-	var/rclick_launch_delay = 0.5 SECONDS
+	/// The cooldown between us hitting objects with kinesis
+	COOLDOWN_DECLARE(hit_cooldown)
+	/// The cooldown between moving a grabbed thing between tiles
+	COOLDOWN_DECLARE(atom_move_cooldown)
 	/// Cooldown for launching things with rclick
 	COOLDOWN_DECLARE(rclick_launch_cooldown)
+	/// Cooldown after picking something up to prevent that one really annoying bug
+	COOLDOWN_DECLARE(pickup_cooldown)
 
 /obj/item/tethergun/Initialize(mapload)
 	. = ..()
@@ -61,11 +66,11 @@
 	QDEL_NULL(soundloop)
 	return ..()
 
-/obj/item/tethergun/add_item_context(
-	obj/item/source,
-	list/context,
-	atom/target,
-)
+/obj/item/tethergun/add_item_context(obj/item/source, list/context, atom/target)
+	if(isturf(target) && (operating_mode == TETHERGUN_MODE_MOVE))
+		context[SCREENTIP_CONTEXT_RMB] = "Launch Yourself"
+		return CONTEXTUAL_SCREENTIP_SET
+
 	if(!can_grab(target))
 		return NONE
 
@@ -89,7 +94,7 @@
 		return ITEM_INTERACT_BLOCKING
 	if(!can_grab(interacting_with))
 		balloon_alert(user, "can't grab!")
-		return ITEM_INTERACT_BLOCKING
+		return user.combat_mode ? ITEM_INTERACT_BLOCKING : null // otherwise you cant put it on tables or whatever
 	switch(operating_mode)
 		if(TETHERGUN_MODE_MOVE)
 			grab_atom(interacting_with, user)
@@ -101,8 +106,6 @@
 /obj/item/tethergun/ranged_interact_with_atom_secondary(atom/interacting_with, mob/living/user, list/modifiers)
 	if(!user.is_holding(src) || !user.client)
 		return ITEM_INTERACT_BLOCKING
-	if(isturf(interacting_with))
-		return ITEM_INTERACT_BLOCKING
 	if(grabbed_atom)
 		var/launched_object = grabbed_atom
 		clear_grab(playsound = FALSE)
@@ -111,14 +114,21 @@
 	if(!range_check(interacting_with, user))
 		balloon_alert(user, "too far!")
 		return ITEM_INTERACT_BLOCKING
+	if(isturf(interacting_with))
+		if(COOLDOWN_FINISHED(src, rclick_launch_cooldown))
+			launch_user(interacting_with, user)
+			COOLDOWN_START(src, rclick_launch_cooldown, RCLICK_LAUNCH_DELAY)
+			return ITEM_INTERACT_SUCCESS
+		else
+			return ITEM_INTERACT_BLOCKING
 	if(!can_grab(interacting_with))
 		balloon_alert(user, "can't grab!")
-		return ITEM_INTERACT_BLOCKING
+		return user.combat_mode ? ITEM_INTERACT_BLOCKING : null // otherwise you cant put it on tables or whatever
 	switch(operating_mode)
 		if(TETHERGUN_MODE_MOVE)
 			if(COOLDOWN_FINISHED(src, rclick_launch_cooldown))
 				launch(interacting_with, user)
-				COOLDOWN_START(src, rclick_launch_cooldown, rclick_launch_delay)
+				COOLDOWN_START(src, rclick_launch_cooldown, RCLICK_LAUNCH_DELAY)
 				return ITEM_INTERACT_SUCCESS
 
 /obj/item/tethergun/interact_with_atom_secondary(atom/interacting_with, mob/living/user, list/modifiers)
@@ -140,7 +150,9 @@
 		return
 	if(kinesis_catcher.mouse_params)
 		kinesis_catcher.calculate_params()
-	if(!kinesis_catcher.given_turf)
+	if(!kinesis_catcher.given_turf || !kinesis_catcher.owner)
+		return
+	if(!COOLDOWN_FINISHED(src, pickup_cooldown))
 		return
 	// user.setDir(get_dir(user, grabbed_atom))
 	if(grabbed_atom.loc == kinesis_catcher.given_turf)
@@ -160,7 +172,7 @@
 				if(grabbed_item.w_class <= WEIGHT_CLASS_BULKY)
 					apply_move_cooldown = FALSE
 			if(apply_move_cooldown)
-				COOLDOWN_START(src, atom_move_cooldown, heavy_atom_delay)
+				COOLDOWN_START(src, atom_move_cooldown, HEAVY_ATOM_DELAY)
 			if(isitem(grabbed_atom) && (user in next_turf))
 				var/obj/item/grabbed_item = grabbed_atom
 				clear_grab()
@@ -194,7 +206,7 @@
 	var/obj/item/grabbed_item = grabbed_atom
 	if(!isnull(hitting_atom))
 		grabbed_item.melee_attack_chain(user, hitting_atom)
-		COOLDOWN_START(src, hit_cooldown, hit_cooldown_time)
+		COOLDOWN_START(src, hit_cooldown, HIT_COOLDOWN_TIME)
 
 /// Checks if the target is something we are actually allowed to grab
 /obj/item/tethergun/proc/can_grab(atom/target)
@@ -232,6 +244,7 @@
 	if(isliving(grabbed_atom))
 		grabbed_atom.add_traits(list(TRAIT_IMMOBILIZED, TRAIT_HANDS_BLOCKED), REF(src))
 		RegisterSignal(grabbed_atom, COMSIG_MOB_STATCHANGE, PROC_REF(on_statchange))
+	target.do_sparks(3, FALSE)
 	ADD_TRAIT(grabbed_atom, TRAIT_NO_FLOATING_ANIM, REF(src))
 	RegisterSignal(grabbed_atom, COMSIG_MOVABLE_SET_ANCHORED, PROC_REF(on_setanchored))
 	playsound(grabbed_atom, 'sound/items/weapons/contractor_baton/contractorbatonhit.ogg', 75, TRUE)
@@ -241,6 +254,7 @@
 	kinesis_beam = user.Beam(grabbed_atom, "lightning[rand(1,12)]")
 	kinesis_catcher = user.overlay_fullscreen("tethergun", /atom/movable/screen/fullscreen/cursor_catcher, 0)
 	kinesis_catcher.assign_to_mob(user)
+	COOLDOWN_START(src, pickup_cooldown, PICKUP_COOLDOWN_LENGTH)
 	soundloop.start()
 	START_PROCESSING(SSfastprocess, src)
 
@@ -251,6 +265,7 @@
 	. = grabbed_atom
 	if(playsound)
 		playsound(grabbed_atom, 'sound/effects/empulse.ogg', 75, TRUE)
+	grabbed_atom.do_sparks(3, FALSE)
 	STOP_PROCESSING(SSfastprocess, src)
 	UnregisterSignal(grabbed_atom, list(COMSIG_MOB_STATCHANGE, COMSIG_MOVABLE_SET_ANCHORED))
 	kinesis_catcher = null
@@ -290,9 +305,18 @@
 /// Launches the passed thing away from the user
 /obj/item/tethergun/proc/launch(atom/movable/launched_object, mob/user)
 	playsound(launched_object, 'sound/effects/magic/repulse.ogg', 100, TRUE)
+	launched_object.do_sparks(3, FALSE)
 	RegisterSignal(launched_object, COMSIG_MOVABLE_IMPACT, PROC_REF(launch_impact))
 	var/turf/target_turf = get_turf_in_angle(get_angle(user, launched_object), get_turf(src), 10)
-	launched_object.throw_at(target_turf, range = grab_range, speed = launched_object.density ? 3 : 4, thrower = user, spin = isitem(launched_object))
+	launched_object.throw_at(target_turf, range = grab_range, speed = isitem(launched_object) ? 3 : 2, thrower = user, spin = isitem(launched_object))
+
+/// Launches the user away from the passed thing
+/obj/item/tethergun/proc/launch_user(atom/movable/launched_object, mob/user)
+	playsound(launched_object, 'sound/effects/magic/repulse.ogg', 100, TRUE)
+	launched_object.do_sparks(3, FALSE)
+	RegisterSignal(launched_object, COMSIG_MOVABLE_IMPACT, PROC_REF(launch_impact))
+	var/turf/target_turf = get_turf_in_angle(get_angle(launched_object, user), get_turf(src), 10)
+	user.throw_at(target_turf, range = grab_range, speed = 1, thrower = user, spin = FALSE)
 
 /// Handles an object thrown by the tethergun hitting something else
 /obj/item/tethergun/proc/launch_impact(atom/movable/source, atom/hit_atom, datum/thrownthing/thrownthing)
@@ -322,3 +346,10 @@
 	model_type = list(/obj/item/robot_model/engineering, /obj/item/robot_model/saboteur)
 	model_flags = BORG_MODEL_ENGINEERING
 	items_to_add = list(/obj/item/tethergun)
+
+#undef TETHERGUN_MODE_MOVE
+#undef TETHERGUN_MODE_TETHER
+#undef PICKUP_COOLDOWN_LENGTH
+#undef HIT_COOLDOWN_TIME
+#undef HEAVY_ATOM_DELAY
+#undef RCLICK_LAUNCH_DELAY
